@@ -178,4 +178,91 @@ app.post('/telegram/webhook', express.raw({ type: 'application/json' }), async (
   }
   res.sendStatus(200);
 });
+// Получить лоты пользователя
+app.get('/api/users/:user_id/lots', async (req, res) => {
+  const { user_id } = req.params;
+  const { data, error } = await supabase
+    .from('lots')
+    .select('*')
+    .eq('user_id', user_id)
+    .order('created_at', { ascending: false });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// Проверка лимита перед созданием лота (внутри маршрута /api/lots)
+// Замени старый блок app.post('/api/lots', ...) на этот:
+
+app.post('/api/lots', upload.array('images', 3), async (req, res) => {
+  const { title, description, start_price, reserve_price, duration_hours, user_id } = req.body;
+  const files = req.files;
+
+  if (!user_id || !title || !start_price || !reserve_price || !files || files.length === 0) {
+    return res.status(400).json({ error: 'Все поля и фото обязательны' });
+  }
+
+  try {
+    // Проверяем лимит
+    const { data: activeLots, error: countError } = await supabase
+      .from('lots')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', user_id)
+      .eq('is_active', true);
+
+    if (countError) throw countError;
+
+    const lotCount = activeLots.count;
+    const { data: user, error: userError } = await supabase
+      .from('users')
+      .select('is_premium')
+      .eq('id', user_id)
+      .single();
+
+    if (userError) throw userError;
+
+    const maxLots = user.is_premium ? 20 : 5;
+    if (lotCount >= maxLots) {
+      return res.status(403).json({ 
+        error: `Достигнут лимит лотов (${maxLots}). Купите Premium для увеличения.` 
+      });
+    }
+
+    // Загрузка фото
+    const imageUrls = [];
+    for (const file of files) {
+      const fileName = `${uuidv4()}${path.extname(file.originalname)}`;
+      const { data, error } = await supabase.storage
+        .from('lot-images')
+        .upload(`public/${fileName}`, file.buffer, {
+          contentType: file.mimetype,
+          upsert: false
+        });
+      if (error) throw error;
+      const publicUrl = supabase.storage.from('lot-images').getPublicUrl(`public/${fileName}`).data.publicUrl;
+      imageUrls.push(publicUrl);
+    }
+
+    // Создание лота
+    const ends_at = new Date(Date.now() + duration_hours * 60 * 60 * 1000);
+    const { data, error } = await supabase.from('lots').insert({
+      user_id,
+      title,
+      description,
+      start_price: parseFloat(start_price),
+      reserve_price: parseFloat(reserve_price),
+      duration_hours: parseInt(duration_hours),
+      ends_at,
+      images: imageUrls,
+      is_active: true,
+      is_premium: false
+    }).select();
+
+    if (error) throw error;
+    res.json({ success: true, lot: data[0] });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Ошибка при создании лота' });
+  }
+});
 app.listen(PORT, () => console.log('Backend запущен'));
