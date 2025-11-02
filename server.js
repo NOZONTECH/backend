@@ -150,4 +150,32 @@ app.delete('/api/admin/lots/:id', requireAdmin, async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
+// Telegram Webhook
+app.post('/telegram/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  const update = JSON.parse(req.body.toString());
+  if (update.message?.text === '/start') {
+    const { id: telegram_id, username, first_name } = update.message.from;
+    // Сохраняем или обновляем пользователя
+    const { data: existing } = await supabase
+      .from('users')
+      .select()
+      .eq('telegram_id', String(telegram_id));
+
+    if (existing.length === 0) {
+      await supabase.from('users').insert({
+        telegram_id: String(telegram_id),
+        email: null,
+        password: null
+      });
+    }
+    // Отправляем приветствие
+    const msg = '✅ Вы зарегистрированы! Перейдите на сайт и нажмите "Войти через Telegram".';
+    await fetch(`https://api.telegram.org/botВАШ_ТОКЕН/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: telegram_id, text: msg })
+    });
+  }
+  res.sendStatus(200);
+});
 app.listen(PORT, () => console.log('Backend запущен'));
