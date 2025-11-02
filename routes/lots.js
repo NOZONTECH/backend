@@ -8,13 +8,13 @@ const router = express.Router();
 // Получить лоты
 router.get('/', async (req, res) => {
   try {
-    const { type } = req.query;
+    const { type, limit } = req.query;
     let query = {};
     if (type) {
       query.type = type;
     }
 
-    const lots = await Lot.find(query).populate('userId', 'email').sort({ createdAt: -1 }).limit(10);
+    const lots = await Lot.find(query).populate('userId', 'email').sort({ createdAt: -1 }).limit(limit || 10);
     res.json(lots);
   } catch (error) {
     res.status(500).json({ message: 'Ошибка сервера', error: error.message });
