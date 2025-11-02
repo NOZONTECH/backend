@@ -116,7 +116,50 @@ app.post('/api/lots', upload.array('images', 3), async (req, res) => {
     res.status(500).json({ error: 'Ошибка при создании лота' });
   }
 });
+// Защищённый маршрут для очистки (только по секретному ключу)
+app.post('/api/cron/cleanup', async (req, res) => {
+  const token = req.headers['x-cron-secret'];
+  if (token !== process.env.CRON_SECRET) {
+    return res.status(403).json({ error: 'Доступ запрещён' });
+  }
 
+  try {
+    // Находим завершённые лоты
+    const { data: expiredLots, error } = await supabase
+      .from('lots')
+      .select('id, images')
+      .lt('ends_at', new Date().toISOString())
+      .eq('is_active', true);
+
+    if (error) throw error;
+
+    if (expiredLots.length === 0) {
+      return res.json({ message: 'Нет завершённых лотов' });
+    }
+
+    // Удаляем фото из Storage
+    for (const lot of expiredLots) {
+      if (lot.images) {
+        const paths = lot.images.map(url => {
+          const match = url.match(/public\/([^?]+)/);
+          return match ? match[1] : null;
+        }).filter(Boolean);
+        if (paths.length > 0) {
+          await supabase.storage.from('lot-images').remove(paths);
+        }
+      }
+    }
+
+    // Деактивируем лоты (или удаляем — решай сам)
+    const lotIds = expiredLots.map(l => l.id);
+    await supabase.from('lots').update({ is_active: false }).in('id', lotIds);
+
+    res.json({ deleted: lotIds.length });
+  } catch (err) {
+    console.error('Очистка не удалась:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
 // === Админка ===
 app.get('/api/admin/lots', requireAdmin, async (req, res) => {
   const { data, error } = await supabase.from('lots').select('*').order('created_at', { ascending: false });
