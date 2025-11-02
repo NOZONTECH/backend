@@ -1,7 +1,5 @@
 const express = require('express');
-const Lot = require('../models/Lot');
-const User = require('../models/User');
-const ActivityLog = require('../models/ActivityLog');
+const { supabase } = require('../server');
 
 const router = express.Router();
 
@@ -9,13 +7,19 @@ const router = express.Router();
 router.get('/', async (req, res) => {
   try {
     const { type, limit } = req.query;
-    let query = {};
-    if (type) {
-      query.type = type;
-    }
+    let query = supabase.from('lots').select(`
+      *,
+      users!inner(email)
+    `).order('created_at', { ascending: false });
 
-    const lots = await Lot.find(query).populate('userId', 'email').sort({ createdAt: -1 }).limit(limit || 10);
-    res.json(lots);
+    if (type) query = query.eq('type', type);
+    if (limit) query = query.limit(parseInt(limit));
+
+    const { data, error } = await query;
+
+    if (error) throw error;
+
+    res.json(data);
   } catch (error) {
     res.status(500).json({ message: 'Ошибка сервера', error: error.message });
   }
@@ -26,30 +30,33 @@ router.post('/', async (req, res) => {
   try {
     const { userId, type, title, price, buyNowPrice, description, tags, images, isPremium, location } = req.body;
 
-    const lot = new Lot({
-      userId,
-      type,
-      title,
-      price,
-      buyNowPrice,
-      description,
-      tags,
-      images,
-      isPremium,
-      location
-    });
+    const { data, error } = await supabase
+      .from('lots')
+      .insert({
+        user_id: userId,
+        type,
+        title,
+        price,
+        buy_now_price: buyNowPrice,
+        description,
+        tags,
+        images,
+        is_premium: isPremium,
+        location
+      })
+      .select()
+      .single();
 
-    await lot.save();
+    if (error) throw error;
 
-    // Записываем действие
-    const activity = new ActivityLog({
-      userId,
+    // Логируем действие
+    await supabase.from('activity_logs').insert({
+      user_id: userId,
       action: 'created',
-      targetId: lot._id
+      target_id: data.id
     });
-    await activity.save();
 
-    res.status(201).json(lot);
+    res.status(201).json(data);
   } catch (error) {
     res.status(500).json({ message: 'Ошибка сервера', error: error.message });
   }
@@ -61,23 +68,23 @@ router.put('/:id', async (req, res) => {
     const { id } = req.params;
     const updates = req.body;
 
-    const lot = await Lot.findById(id);
-    if (!lot) {
-      return res.status(404).json({ message: 'Лот не найден' });
-    }
+    const { data, error } = await supabase
+      .from('lots')
+      .update(updates)
+      .eq('id', id)
+      .select()
+      .single();
 
-    Object.assign(lot, updates);
-    await lot.save();
+    if (error) throw error;
 
-    // Записываем действие
-    const activity = new ActivityLog({
-      userId: lot.userId,
+    // Логируем действие
+    await supabase.from('activity_logs').insert({
+      user_id: data.user_id,
       action: 'edited',
-      targetId: lot._id
+      target_id: data.id
     });
-    await activity.save();
 
-    res.json(lot);
+    res.json(data);
   } catch (error) {
     res.status(500).json({ message: 'Ошибка сервера', error: error.message });
   }
@@ -88,18 +95,21 @@ router.delete('/:id', async (req, res) => {
   try {
     const { id } = req.params;
 
-    const lot = await Lot.findByIdAndDelete(id);
-    if (!lot) {
-      return res.status(404).json({ message: 'Лот не найден' });
-    }
+    const { data, error } = await supabase
+      .from('lots')
+      .delete()
+      .eq('id', id)
+      .select()
+      .single();
 
-    // Записываем действие
-    const activity = new ActivityLog({
-      userId: lot.userId,
+    if (error) throw error;
+
+    // Логируем действие
+    await supabase.from('activity_logs').insert({
+      user_id: data.user_id,
       action: 'deleted',
-      targetId: lot._id
+      target_id: data.id
     });
-    await activity.save();
 
     res.json({ message: 'Лот удалён' });
   } catch (error) {
@@ -113,20 +123,34 @@ router.post('/:id/bid', async (req, res) => {
     const { id } = req.params;
     const { userId, amount } = req.body;
 
-    const lot = await Lot.findById(id);
-    if (!lot) {
-      return res.status(404).json({ message: 'Лот не найден' });
-    }
+    // Получаем текущий лот
+    const { data: lot, error: lotError } = await supabase
+      .from('lots')
+      .select('*')
+      .eq('id', id)
+      .single();
 
-    lot.bids.push({
-      userId,
+    if (lotError) throw lotError;
+
+    // Добавляем ставку
+    const newBid = {
+      user_id: userId,
       amount,
-      date: new Date()
-    });
+      date: new Date().toISOString()
+    };
 
-    await lot.save();
+    const updatedBids = [...(lot.bids || []), newBid];
 
-    res.json(lot);
+    const { data, error } = await supabase
+      .from('lots')
+      .update({ bids: updatedBids })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    res.json(data);
   } catch (error) {
     res.status(500).json({ message: 'Ошибка сервера', error: error.message });
   }
