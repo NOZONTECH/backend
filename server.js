@@ -170,7 +170,7 @@ app.post('/telegram/webhook', express.raw({ type: 'application/json' }), async (
     }
     // Отправляем приветствие
     const msg = '✅ Вы зарегистрированы! Перейдите на сайт и нажмите "Войти через Telegram".';
-    await fetch(`https://api.telegram.org/botВАШ_ТОКЕН/sendMessage`, {
+    await fetch(`https://api.telegram.org/8274197381:AAG86fI_EptHDEguDVOSrUzFJJ6pMq1kIZk/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ chat_id: telegram_id, text: msg })
