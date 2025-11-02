@@ -1,5 +1,5 @@
 const express = require('express');
-const Message = require('../models/Message');
+const { supabase } = require('../server');
 
 const router = express.Router();
 
@@ -7,12 +7,20 @@ const router = express.Router();
 router.get('/', async (req, res) => {
   try {
     const { toUserId, fromUserId } = req.query;
-    let query = {};
-    if (toUserId) query.toUserId = toUserId;
-    if (fromUserId) query.fromUserId = fromUserId;
+    let query = supabase.from('messages').select(`
+      *,
+      from_user:users!from_user_id(email),
+      to_user:users!to_user_id(email)
+    `).order('created_at', { ascending: false });
 
-    const messages = await Message.find(query).populate('fromUserId toUserId', 'email').sort({ date: -1 });
-    res.json(messages);
+    if (toUserId) query = query.eq('to_user_id', toUserId);
+    if (fromUserId) query = query.eq('from_user_id', fromUserId);
+
+    const { data, error } = await query;
+
+    if (error) throw error;
+
+    res.json(data);
   } catch (error) {
     res.status(500).json({ message: 'Ошибка сервера', error: error.message });
   }
@@ -23,16 +31,20 @@ router.post('/', async (req, res) => {
   try {
     const { fromUserId, toUserId, text, lotId } = req.body;
 
-    const message = new Message({
-      fromUserId,
-      toUserId,
-      text,
-      lotId
-    });
+    const { data, error } = await supabase
+      .from('messages')
+      .insert({
+        from_user_id: fromUserId,
+        to_user_id: toUserId,
+        text,
+        lot_id: lotId
+      })
+      .select()
+      .single();
 
-    await message.save();
+    if (error) throw error;
 
-    res.status(201).json(message);
+    res.status(201).json(data);
   } catch (error) {
     res.status(500).json({ message: 'Ошибка сервера', error: error.message });
   }
