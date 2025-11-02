@@ -1,7 +1,7 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const User = require('../models/User');
+const { supabase } = require('../server');
 
 const router = express.Router();
 
@@ -10,19 +10,32 @@ router.post('/register', async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    const existingUser = await User.findOne({ email });
+    // Проверяем, существует ли пользователь
+    const { data: existingUser, error: userError } = await supabase
+      .from('users')
+      .select('id')
+      .eq('email', email)
+      .single();
+
     if (existingUser) {
       return res.status(400).json({ message: 'Пользователь с таким email уже существует' });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
-    const user = new User({
-      email,
-      password: hashedPassword
-    });
 
-    await user.save();
-    res.status(201).json({ message: 'Пользователь создан', user });
+    const { data: newUser, error } = await supabase
+      .from('users')
+      .insert({
+        email,
+        password: hashedPassword,
+        is_admin: false
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    res.status(201).json({ message: 'Пользователь создан', user: newUser });
   } catch (error) {
     res.status(500).json({ message: 'Ошибка сервера', error: error.message });
   }
@@ -33,8 +46,13 @@ router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    const user = await User.findOne({ email });
-    if (!user) {
+    const { data: user, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('email', email)
+      .single();
+
+    if (error || !user) {
       return res.status(400).json({ message: 'Неверный email или пароль' });
     }
 
@@ -44,12 +62,12 @@ router.post('/login', async (req, res) => {
     }
 
     const token = jwt.sign(
-      { id: user._id, email: user.email, isAdmin: user.isAdmin },
+      { id: user.id, email: user.email, isAdmin: user.is_admin },
       process.env.JWT_SECRET,
       { expiresIn: '7d' }
     );
 
-    res.json({ token, user: { id: user._id, email: user.email, isAdmin: user.isAdmin } });
+    res.json({ token, user: { id: user.id, email: user.email, isAdmin: user.is_admin } });
   } catch (error) {
     res.status(500).json({ message: 'Ошибка сервера', error: error.message });
   }
