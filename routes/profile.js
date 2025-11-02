@@ -1,8 +1,5 @@
 const express = require('express');
-const User = require('../models/User');
-const Lot = require('../models/Lot');
-const Message = require('../models/Message');
-const ActivityLog = require('../models/ActivityLog');
+const { supabase } = require('../server');
 
 const router = express.Router();
 
@@ -11,15 +8,51 @@ router.get('/', async (req, res) => {
   try {
     const { userId } = req.query;
 
-    const user = await User.findById(userId).select('-password');
-    if (!user) {
-      return res.status(404).json({ message: 'Пользователь не найден' });
-    }
+    const { data: user, error: userError } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', userId)
+      .single();
 
-    const userLots = await Lot.find({ userId }).sort({ createdAt: -1 });
-    const receivedMessages = await Message.find({ toUserId: userId }).populate('fromUserId', 'email');
-    const sentMessages = await Message.find({ fromUserId: userId }).populate('toUserId', 'email');
-    const activityLogs = await ActivityLog.find({ userId }).sort({ date: -1 });
+    if (userError) throw userError;
+
+    const { data: userLots, error: lotsError } = await supabase
+      .from('lots')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+
+    if (lotsError) throw lotsError;
+
+    const { data: receivedMessages, error: receivedError } = await supabase
+      .from('messages')
+      .select(`
+        *,
+        from_user:users!from_user_id(email)
+      `)
+      .eq('to_user_id', userId)
+      .order('created_at', { ascending: false });
+
+    if (receivedError) throw receivedError;
+
+    const { data: sentMessages, error: sentError } = await supabase
+      .from('messages')
+      .select(`
+        *,
+        to_user:users!to_user_id(email)
+      `)
+      .eq('from_user_id', userId)
+      .order('created_at', { ascending: false });
+
+    if (sentError) throw sentError;
+
+    const { data: activityLogs, error: activityError } = await supabase
+      .from('activity_logs')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+
+    if (activityError) throw activityError;
 
     res.json({
       user,
@@ -41,12 +74,16 @@ router.put('/', async (req, res) => {
     const { userId } = req.body;
     const updates = req.body;
 
-    const user = await User.findByIdAndUpdate(userId, updates, { new: true }).select('-password');
-    if (!user) {
-      return res.status(404).json({ message: 'Пользователь не найден' });
-    }
+    const { data, error } = await supabase
+      .from('users')
+      .update(updates)
+      .eq('id', userId)
+      .select()
+      .single();
 
-    res.json(user);
+    if (error) throw error;
+
+    res.json(data);
   } catch (error) {
     res.status(500).json({ message: 'Ошибка сервера', error: error.message });
   }
